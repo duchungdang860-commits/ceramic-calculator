@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -111,7 +110,7 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
         ["Годных изделий, шт", f"{sellable_u}"],
     ]
 
-    # ИЗМЕНЕНИЕ: Ширина колонок увеличена до суммы 420 (250+170), чтобы совпасть со второй таблицей
+    # Ширина колонок увеличена до суммы 420 (250+170), чтобы совпасть со второй таблицей
     tbl_main = Table(data_main, colWidths=[250, 170], hAlign='LEFT')
     tbl_main.setStyle(
         TableStyle(
@@ -182,7 +181,7 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
         story.append(Paragraph("<b>Материалы (входят в производство)</b>", styles["SectionHeader"]))
         mats_rows = [["Материал", "Цена (₽)"]] + [[m.get("Материал", ""), str(m.get("Цена (₽)", ""))] for m in mats]
         
-        # ИЗМЕНЕНИЕ: Ширина колонок увеличена до суммы 420 (300+120), чтобы совпасть со второй таблицей
+        # Ширина колонок увеличена до суммы 420 (300+120), чтобы совпасть со второй таблицей
         mats_tbl = Table(mats_rows, colWidths=[300, 120], hAlign='LEFT')
         mats_tbl.setStyle(
             TableStyle(
@@ -243,6 +242,32 @@ def _fetch_pdf(calc_id: str) -> bytes | None:
     except Exception:
         return None
 
+# --- 0. CALLBACK-ФУНКЦИЯ ДЛЯ ЗАГРУЗКИ ---
+def load_calculation(snapshot_data):
+    """Loads snapshot data into session state widgets."""
+    inputs = snapshot_data.get("inputs", {})
+    mats = snapshot_data.get("materials", [])
+    
+    st.session_state.calc_title = snapshot_data.get("title", "")
+    st.session_state.labor_unit = float(inputs.get("labor_unit", st.session_state.labor_unit))
+    st.session_state.firing_unit = float(inputs.get("firing_unit", st.session_state.firing_unit))
+    st.session_state.pack_unit = float(inputs.get("pack_unit", st.session_state.pack_unit))
+    st.session_state.batch_size = int(inputs.get("batch_size", st.session_state.batch_size))
+    st.session_state.reject_rate = int(inputs.get("reject_rate", st.session_state.reject_rate))
+    st.session_state.marketing_total = float(inputs.get("marketing_total", st.session_state.marketing_total))
+    st.session_state.sell_price = float(inputs.get("sell_price", st.session_state.sell_price))
+    st.session_state.tax_pct = int(inputs.get("tax_pct", st.session_state.tax_pct))
+    st.session_state.mp_pct = int(inputs.get("mp_pct", st.session_state.mp_pct))
+    
+    if mats:
+        st.session_state.materials_df = pd.DataFrame(mats)
+        # Сбрасываем кэш виджета редактора
+        if "materials_editor" in st.session_state:
+            del st.session_state["materials_editor"]
+            
+    st.toast("Данные загружены из истории!", icon="✅")
+
+
 # --- 1. НАСТРОЙКИ СТРАНИЦЫ ---
 st.set_page_config(page_title="Экономика продукта", layout="centered")
 
@@ -275,8 +300,11 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(0,0,0,0.03);
     }
 
-    /* Зеленая кнопка Сохранить (акцентная) */
-    div.stButton > button {
+    /* Зеленая кнопка (акцентная).
+       Применяем и к stButton (обычные), и к stDownloadButton (скачивание),
+       чтобы они были идентичны.
+    */
+    div.stButton > button, div.stDownloadButton > button {
         background-color: #00BA88 !important;
         color: white !important;
         height: 3.5em !important;
@@ -613,37 +641,28 @@ with st.expander("📜 История расчетов"):
             )
 
             if picked:
+                # ИЗМЕНЕНИЕ: Используем use_container_width=True для обеих кнопок
                 c1, c2 = st.columns(2)
                 with c1:
                     pdf_bytes = _fetch_pdf(picked)
                     if pdf_bytes:
                         st.download_button(
-                            "⬇️ Скачать PDF выбранного расчёта",
+                            "⬇️ Скачать PDF",
                             data=pdf_bytes,
                             file_name=f"calc_{picked}.pdf",
                             mime="application/pdf",
+                            use_container_width=True  # Растягиваем на всю ширину
                         )
+                    else:
+                        st.info("PDF не найден")
                 with c2:
-                    if st.button("↩️ Загрузить в форму", key=f"load_{picked}"):
-                        snap = dfh.loc[dfh["id"] == picked, "_snapshot"].iloc[0] or {}
-                        inputs = snap.get("inputs", {})
-                        mats = snap.get("materials", [])
-
-                        # populate widget state
-                        st.session_state.calc_title = snap.get("title", "")
-                        st.session_state.labor_unit = float(inputs.get("labor_unit", st.session_state.labor_unit))
-                        st.session_state.firing_unit = float(inputs.get("firing_unit", st.session_state.firing_unit))
-                        st.session_state.pack_unit = float(inputs.get("pack_unit", st.session_state.pack_unit))
-                        st.session_state.batch_size = int(inputs.get("batch_size", st.session_state.batch_size))
-                        st.session_state.reject_rate = int(inputs.get("reject_rate", st.session_state.reject_rate))
-                        st.session_state.marketing_total = float(inputs.get("marketing_total", st.session_state.marketing_total))
-                        st.session_state.sell_price = float(inputs.get("sell_price", st.session_state.sell_price))
-                        st.session_state.tax_pct = int(inputs.get("tax_pct", st.session_state.tax_pct))
-                        st.session_state.mp_pct = int(inputs.get("mp_pct", st.session_state.mp_pct))
-                        st.session_state.materials_df = pd.DataFrame(mats) if mats else st.session_state.materials_df
-
-                        st.success("Загружено в форму.")
-                        st.rerun()
+                    snap = dfh.loc[dfh["id"] == picked, "_snapshot"].iloc[0] or {}
+                    st.button("↩️ Загрузить в форму", 
+                              key=f"load_{picked}", 
+                              on_click=load_calculation, 
+                              args=(snap,),
+                              use_container_width=True  # Растягиваем на всю ширину
+                    )
     else:
         if st.session_state.history:
             st.caption("Сейчас история хранится только в текущей сессии. Чтобы история сохранялась навсегда — подключи Supabase через secrets.")
