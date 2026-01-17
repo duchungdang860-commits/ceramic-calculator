@@ -92,13 +92,14 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
     # --- 1. KEY METRICS ---
     metrics = snapshot.get("metrics", {})
     sell_price = metrics.get("sell_price", 0)
+    sellable_u = metrics.get("sellable_u", 0)
 
     data_main = [
         ["Цена за 1 шт, ₽", f"{sell_price}"],
         ["Прибыль с 1 шт, ₽", f"{metrics.get('unit_profit', 0):.2f}"],
         ["Прибыль партии, ₽", f"{metrics.get('total_profit', 0):.0f}"],
         ["Рентабельность, %", f"{metrics.get('margin', 0):.1f}"],
-        ["Годных изделий, шт", f"{metrics.get('sellable_u', 0)}"],
+        ["Годных изделий, шт", f"{sellable_u}"],
     ]
 
     tbl_main = Table(data_main, colWidths=[200, 150], hAlign='LEFT')
@@ -117,12 +118,15 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
     story.append(Spacer(1, 12))
 
     # --- 2. DETAILED BREAKDOWN (NEW SECTION) ---
-    # Извлекаем детальные метрики, добавленные в snapshot
+    # Извлекаем детальные метрики
     u_prod = metrics.get("u_prod", 0)
     u_mark = metrics.get("u_mark", 0)
     u_comm = metrics.get("u_comm", 0)
     u_tax  = metrics.get("u_tax", 0)
     u_prof = metrics.get("unit_profit", 0)
+    
+    # Выручка партии (Сумма продажи) = Цена * Годные изделия
+    total_revenue = sell_price * sellable_u
     
     # Вспомогательная функция для %
     def get_pct(val, total):
@@ -130,25 +134,32 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
 
     story.append(Paragraph("<b>Детальная структура цены (Смета)</b>", styles["SectionHeader"]))
     
+    # Формируем таблицу. Первая строка данных - СУММА ПРОДАЖИ
     data_details = [
-        ["Статья расходов", "На 1 шт (₽)", "Доля в цене"],
-        ["Производство (с уч. брака)", f"{u_prod:.2f}", get_pct(u_prod, sell_price)],
-        ["Маркетинг и логистика", f"{u_mark:.2f}", get_pct(u_mark, sell_price)],
-        ["Комиссия площадки", f"{u_comm:.2f}", get_pct(u_comm, sell_price)],
-        ["Налоги", f"{u_tax:.2f}", get_pct(u_tax, sell_price)],
-        ["ЧИСТАЯ ПРИБЫЛЬ", f"{u_prof:.2f}", get_pct(u_prof, sell_price)],
+        ["Статья расходов / Доходов", "На 1 шт (₽)", "На партию (₽)", "Доля"],
+        # Строка Выручки
+        ["Сумма продажи (Выручка)", f"{sell_price:.2f}", f"{total_revenue:.0f}", "100%"],
+        # Расходы
+        ["Производство (с уч. брака)", f"{u_prod:.2f}", f"{u_prod * sellable_u:.0f}", get_pct(u_prod, sell_price)],
+        ["Маркетинг и логистика", f"{u_mark:.2f}", f"{u_mark * sellable_u:.0f}", get_pct(u_mark, sell_price)],
+        ["Комиссия площадки", f"{u_comm:.2f}", f"{u_comm * sellable_u:.0f}", get_pct(u_comm, sell_price)],
+        ["Налоги", f"{u_tax:.2f}", f"{u_tax * sellable_u:.0f}", get_pct(u_tax, sell_price)],
+        ["ЧИСТАЯ ПРИБЫЛЬ", f"{u_prof:.2f}", f"{metrics.get('total_profit', 0):.0f}", get_pct(u_prof, sell_price)],
     ]
 
-    tbl_details = Table(data_details, colWidths=[220, 100, 100], hAlign='LEFT')
+    # Немного расширим таблицу, добавив колонку "На партию"
+    tbl_details = Table(data_details, colWidths=[180, 80, 100, 60], hAlign='LEFT')
     tbl_details.setStyle(
         TableStyle(
             [
                 ("FONTNAME", (0, 0), (-1, -1), font_name),
                 ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),     # Заголовок
-                ("BACKGROUND", (0, -1), (-1, -1), colors.whitesmoke), # Строка прибыли
-                ("FONTNAME", (0, 0), (-1, 0), font_name), # Жирный бы сюда, но шрифта bold может не быть
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),      # Заголовок
+                ("BACKGROUND", (0, 1), (-1, 1), colors.whitesmoke),     # Строка Выручки (светлая)
+                ("FONTNAME", (0, 1), (-1, 1), font_name),               # Выручка обычным шрифтом (или жирным если есть)
+                ("BACKGROUND", (0, -1), (-1, -1), "#E6F4EA"),          # Строка прибыли (зеленоватая)
                 ("PADDING", (0, 0), (-1, -1), 5),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),                   # Выравнивание цифр вправо
             ]
         )
     )
@@ -301,8 +312,8 @@ st.session_state.setdefault("batch_size", 100)
 st.session_state.setdefault("reject_rate", 5)
 st.session_state.setdefault("marketing_total", 5000)
 st.session_state.setdefault("sell_price", 1200)
-st.session_state.setdefault("tax_pct", 6.0)
-st.session_state.setdefault("mp_pct", 20.0)
+st.session_state.setdefault("tax_pct", 6)
+st.session_state.setdefault("mp_pct", 20)
 st.session_state.setdefault("calc_title", "")
 
 # --- 5. ЛОГИКА РАСЧЕТА (вынесена вверх для работы кнопки и метрик) ---
@@ -316,8 +327,8 @@ def calculate_metrics(mat_df, labor, firing, pack, b_size, reject, mktg, price, 
     # Юнит-экономика (учитываем брак: расходы на всю партию делим на годные изделия)
     u_prod = (cogs_unit * b_size) / sellable
     u_mark = mktg / sellable
-    u_comm = price * (comm / 100)
-    u_tax = price * (tax / 100)
+    u_comm = price * (comm / 100.0)
+    u_tax = price * (tax / 100.0)
     
     u_profit = price - (u_prod + u_mark + u_comm + u_tax)
     t_profit = u_profit * sellable
@@ -375,9 +386,10 @@ with st.container():
     st.markdown("### 3️⃣ Цена и комиссии")
     sell_price = st.number_input("Розничная цена за 1 шт (₽)", key="sell_price", value=int(st.session_state.sell_price), step=50)
     
+    # Слайдеры теперь int
     c1, c2 = st.columns(2)
-    tax_pct = c1.slider("Налог (%)", 0.0, 20.0, float(st.session_state.tax_pct), key="tax_pct")
-    mp_pct = c2.slider("Комиссия площадки (%)", 0.0, 30.0, float(st.session_state.mp_pct), key="mp_pct")
+    tax_pct = c1.slider("Налог (%)", 0, 20, int(st.session_state.tax_pct), key="tax_pct")
+    mp_pct = c2.slider("Комиссия площадки (%)", 0, 30, int(st.session_state.mp_pct), key="mp_pct")
 
 # --- ВЫПОЛНЕНИЕ РАСЧЕТОВ ---
 cogs_u, sellable_u, u_prod, u_mark, u_comm, u_tax, unit_profit, total_profit, margin = calculate_metrics(
@@ -399,8 +411,8 @@ with col_save_btn:
                 "reject_rate": int(reject_rate),
                 "marketing_total": float(marketing_total),
                 "sell_price": float(sell_price),
-                "tax_pct": float(tax_pct),
-                "mp_pct": float(mp_pct),
+                "tax_pct": int(tax_pct),
+                "mp_pct": int(mp_pct),
             },
             "materials": materials_df.to_dict("records"),
             "metrics": {
@@ -410,7 +422,6 @@ with col_save_btn:
                 "unit_profit": float(unit_profit),
                 "total_profit": float(total_profit),
                 "margin": float(margin),
-                # ДОБАВЛЕННЫЕ ДЕТАЛЬНЫЕ МЕТРИКИ ДЛЯ PDF:
                 "u_prod": float(u_prod),
                 "u_mark": float(u_mark),
                 "u_comm": float(u_comm),
@@ -418,7 +429,7 @@ with col_save_btn:
             },
         }
 
-        # PDF (always generated; even if DB not configured we allow download)
+        # PDF (always generated)
         try:
             pdf_bytes = build_pdf_bytes(snapshot)
             st.session_state.last_pdf = (str(uuid.uuid4()), pdf_bytes)
@@ -490,11 +501,43 @@ with res_col2:
 
 # --- 8. ДЕТАЛЬНАЯ СМЕТА (ОБНОВЛЕННАЯ) ---
 st.markdown("### 📊 Детальная смета")
+
+# Расчет общей выручки для таблицы
+total_revenue_calc = sell_price * sellable_u
+
 df_details = pd.DataFrame({
-    "Статья расходов": ["Производство (с учетом брака)", "Маркетинг и логистика", "Комиссия площадки", "Налоги", "ЧИСТАЯ ПРИБЫЛЬ"],
-    "На 1 шт. (₽)": [u_prod, u_mark, u_comm, u_tax, unit_profit],
-    "На партию (₽)": [u_prod * sellable_u, u_mark * sellable_u, u_comm * sellable_u, u_tax * sellable_u, total_profit],
-    "Доля в цене": [u_prod/sell_price, u_mark/sell_price, u_comm/sell_price, u_tax/sell_price, unit_profit/sell_price]
+    "Статья расходов / Доходов": [
+        "Сумма продажи (Выручка)", 
+        "Производство (с учетом брака)", 
+        "Маркетинг и логистика", 
+        "Комиссия площадки", 
+        "Налоги", 
+        "ЧИСТАЯ ПРИБЫЛЬ"
+    ],
+    "На 1 шт. (₽)": [
+        sell_price, 
+        u_prod, 
+        u_mark, 
+        u_comm, 
+        u_tax, 
+        unit_profit
+    ],
+    "На партию (₽)": [
+        total_revenue_calc, 
+        u_prod * sellable_u, 
+        u_mark * sellable_u, 
+        u_comm * sellable_u, 
+        u_tax * sellable_u, 
+        total_profit
+    ],
+    "Доля в цене": [
+        1.0, 
+        u_prod/sell_price if sell_price else 0, 
+        u_mark/sell_price if sell_price else 0, 
+        u_comm/sell_price if sell_price else 0, 
+        u_tax/sell_price if sell_price else 0, 
+        unit_profit/sell_price if sell_price else 0
+    ]
 })
 
 st.dataframe(
@@ -583,8 +626,8 @@ with st.expander("📜 История расчетов"):
                         st.session_state.reject_rate = int(inputs.get("reject_rate", st.session_state.reject_rate))
                         st.session_state.marketing_total = float(inputs.get("marketing_total", st.session_state.marketing_total))
                         st.session_state.sell_price = float(inputs.get("sell_price", st.session_state.sell_price))
-                        st.session_state.tax_pct = float(inputs.get("tax_pct", st.session_state.tax_pct))
-                        st.session_state.mp_pct = float(inputs.get("mp_pct", st.session_state.mp_pct))
+                        st.session_state.tax_pct = int(inputs.get("tax_pct", st.session_state.tax_pct))
+                        st.session_state.mp_pct = int(inputs.get("mp_pct", st.session_state.mp_pct))
                         st.session_state.materials_df = pd.DataFrame(mats) if mats else st.session_state.materials_df
 
                         st.success("Загружено в форму.")
