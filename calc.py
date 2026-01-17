@@ -50,7 +50,7 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
     """Generate a simple one-page PDF with embedded PT Sans if available."""
     try:
         from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib import colors
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
         from reportlab.pdfbase import pdfmetrics
@@ -61,7 +61,9 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
         ) from e
 
     buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, title="Unit-economics")
+    # Уменьшаем поля (margins), чтобы всё влезло на одну страницу
+    doc = SimpleDocTemplate(buf, pagesize=A4, title="Unit-economics", 
+                            topMargin=30, bottomMargin=30, leftMargin=40, rightMargin=40)
     styles = getSampleStyleSheet()
 
     font_name = "Helvetica"
@@ -71,60 +73,105 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
             pdfmetrics.registerFont(TTFont("PTSans", font_path))
             font_name = "PTSans"
         except Exception:
-            # If font registration fails for any reason, fallback to Helvetica.
             font_name = "Helvetica"
 
+    # Настройка стилей шрифтов
     styles["Normal"].fontName = font_name
     styles["Title"].fontName = font_name
+    
+    # Кастомный стиль для заголовков секций
+    styles.add(ParagraphStyle(name='SectionHeader', parent=styles['Normal'], fontSize=12, spaceAfter=6, fontName=font_name, leading=14))
 
     story = []
     title = snapshot.get("title") or "Экономика продукта — сохранённый расчёт"
     story.append(Paragraph(title, styles["Title"]))
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 6))
     story.append(Paragraph(f"Время сохранения: {snapshot.get('saved_at','')}", styles["Normal"]))
     story.append(Spacer(1, 12))
 
-    # Key metrics
+    # --- 1. KEY METRICS ---
     metrics = snapshot.get("metrics", {})
-    data = [
-        ["Цена за 1 шт, ₽", metrics.get("sell_price")],
-        ["COGS за 1 шт, ₽", f"{metrics.get('cogs_u', 0):.2f}"],
-        ["Годных изделий, шт", metrics.get("sellable_u")],
+    sell_price = metrics.get("sell_price", 0)
+
+    data_main = [
+        ["Цена за 1 шт, ₽", f"{sell_price}"],
         ["Прибыль с 1 шт, ₽", f"{metrics.get('unit_profit', 0):.2f}"],
         ["Прибыль партии, ₽", f"{metrics.get('total_profit', 0):.0f}"],
         ["Рентабельность, %", f"{metrics.get('margin', 0):.1f}"],
+        ["Годных изделий, шт", f"{metrics.get('sellable_u', 0)}"],
     ]
 
-    tbl = Table(data, colWidths=[220, 320])
-    tbl.setStyle(
+    tbl_main = Table(data_main, colWidths=[200, 150], hAlign='LEFT')
+    tbl_main.setStyle(
         TableStyle(
             [
                 ("FONTNAME", (0, 0), (-1, -1), font_name),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
-                ("PADDING", (0, 0), (-1, -1), 6),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke), # Первый столбец серый
+                ("PADDING", (0, 0), (-1, -1), 5),
             ]
         )
     )
-    story.append(tbl)
+    story.append(Paragraph("<b>Ключевые показатели</b>", styles["SectionHeader"]))
+    story.append(tbl_main)
     story.append(Spacer(1, 12))
 
-    # Materials
-    mats = snapshot.get("materials", [])
-    story.append(Paragraph("Материалы", styles["Normal"]))
-    mats_rows = [["Материал", "Цена (₽)"]] + [[m.get("Материал", ""), m.get("Цена (₽)", "")] for m in mats]
-    mats_tbl = Table(mats_rows, colWidths=[360, 180])
-    mats_tbl.setStyle(
+    # --- 2. DETAILED BREAKDOWN (NEW SECTION) ---
+    # Извлекаем детальные метрики, добавленные в snapshot
+    u_prod = metrics.get("u_prod", 0)
+    u_mark = metrics.get("u_mark", 0)
+    u_comm = metrics.get("u_comm", 0)
+    u_tax  = metrics.get("u_tax", 0)
+    u_prof = metrics.get("unit_profit", 0)
+    
+    # Вспомогательная функция для %
+    def get_pct(val, total):
+        return f"{(val / total * 100):.1f}%" if total > 0 else "0%"
+
+    story.append(Paragraph("<b>Детальная структура цены (Смета)</b>", styles["SectionHeader"]))
+    
+    data_details = [
+        ["Статья расходов", "На 1 шт (₽)", "Доля в цене"],
+        ["Производство (с уч. брака)", f"{u_prod:.2f}", get_pct(u_prod, sell_price)],
+        ["Маркетинг и логистика", f"{u_mark:.2f}", get_pct(u_mark, sell_price)],
+        ["Комиссия площадки", f"{u_comm:.2f}", get_pct(u_comm, sell_price)],
+        ["Налоги", f"{u_tax:.2f}", get_pct(u_tax, sell_price)],
+        ["ЧИСТАЯ ПРИБЫЛЬ", f"{u_prof:.2f}", get_pct(u_prof, sell_price)],
+    ]
+
+    tbl_details = Table(data_details, colWidths=[220, 100, 100], hAlign='LEFT')
+    tbl_details.setStyle(
         TableStyle(
             [
                 ("FONTNAME", (0, 0), (-1, -1), font_name),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
-                ("PADDING", (0, 0), (-1, -1), 6),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),     # Заголовок
+                ("BACKGROUND", (0, -1), (-1, -1), colors.whitesmoke), # Строка прибыли
+                ("FONTNAME", (0, 0), (-1, 0), font_name), # Жирный бы сюда, но шрифта bold может не быть
+                ("PADDING", (0, 0), (-1, -1), 5),
             ]
         )
     )
-    story.append(mats_tbl)
+    story.append(tbl_details)
+    story.append(Spacer(1, 12))
+
+    # --- 3. MATERIALS ---
+    mats = snapshot.get("materials", [])
+    if mats:
+        story.append(Paragraph("<b>Материалы (входят в производство)</b>", styles["SectionHeader"]))
+        mats_rows = [["Материал", "Цена (₽)"]] + [[m.get("Материал", ""), str(m.get("Цена (₽)", ""))] for m in mats]
+        mats_tbl = Table(mats_rows, colWidths=[250, 100], hAlign='LEFT')
+        mats_tbl.setStyle(
+            TableStyle(
+                [
+                    ("FONTNAME", (0, 0), (-1, -1), font_name),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                    ("PADDING", (0, 0), (-1, -1), 5),
+                ]
+            )
+        )
+        story.append(mats_tbl)
 
     doc.build(story)
     return buf.getvalue()
@@ -363,6 +410,11 @@ with col_save_btn:
                 "unit_profit": float(unit_profit),
                 "total_profit": float(total_profit),
                 "margin": float(margin),
+                # ДОБАВЛЕННЫЕ ДЕТАЛЬНЫЕ МЕТРИКИ ДЛЯ PDF:
+                "u_prod": float(u_prod),
+                "u_mark": float(u_mark),
+                "u_comm": float(u_comm),
+                "u_tax": float(u_tax),
             },
         }
 
