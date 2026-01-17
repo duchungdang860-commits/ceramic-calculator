@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -110,7 +111,8 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
         ["Годных изделий, шт", f"{sellable_u}"],
     ]
 
-    tbl_main = Table(data_main, colWidths=[200, 150], hAlign='LEFT')
+    # ИЗМЕНЕНИЕ: Ширина колонок увеличена до суммы 420 (250+170), чтобы совпасть со второй таблицей
+    tbl_main = Table(data_main, colWidths=[250, 170], hAlign='LEFT')
     tbl_main.setStyle(
         TableStyle(
             [
@@ -155,7 +157,7 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
         ["ЧИСТАЯ ПРИБЫЛЬ", f"{u_prof:.2f}", f"{metrics.get('total_profit', 0):.0f}", get_pct(u_prof, sell_price)],
     ]
 
-    # Немного расширим таблицу, добавив колонку "На партию"
+    # Ширина второй таблицы: 180+80+100+60 = 420
     tbl_details = Table(data_details, colWidths=[180, 80, 100, 60], hAlign='LEFT')
     tbl_details.setStyle(
         TableStyle(
@@ -179,7 +181,9 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
     if mats:
         story.append(Paragraph("<b>Материалы (входят в производство)</b>", styles["SectionHeader"]))
         mats_rows = [["Материал", "Цена (₽)"]] + [[m.get("Материал", ""), str(m.get("Цена (₽)", ""))] for m in mats]
-        mats_tbl = Table(mats_rows, colWidths=[250, 100], hAlign='LEFT')
+        
+        # ИЗМЕНЕНИЕ: Ширина колонок увеличена до суммы 420 (300+120), чтобы совпасть со второй таблицей
+        mats_tbl = Table(mats_rows, colWidths=[300, 120], hAlign='LEFT')
         mats_tbl.setStyle(
             TableStyle(
                 [
