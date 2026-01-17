@@ -83,8 +83,16 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
     styles.add(ParagraphStyle(name='SectionHeader', parent=styles['Normal'], fontSize=12, spaceAfter=6, fontName=font_name, leading=14))
 
     story = []
-    title = snapshot.get("title") or "Экономика продукта — сохранённый расчёт"
-    story.append(Paragraph(title, styles["Title"]))
+    
+    # --- ЗАГОЛОВОК С РАЗМЕРОМ ПАРТИИ ---
+    base_title = snapshot.get("title") or "Экономика продукта"
+    # Получаем размер партии из inputs, если его нет - ставим 0
+    batch_sz = snapshot.get("inputs", {}).get("batch_size", 0)
+    
+    # Формируем заголовок: "Название, X шт."
+    full_title = f"{base_title}, {batch_sz} шт." if batch_sz else base_title
+
+    story.append(Paragraph(full_title, styles["Title"]))
     story.append(Spacer(1, 6))
     story.append(Paragraph(f"Время сохранения: {snapshot.get('saved_at','')}", styles["Normal"]))
     story.append(Spacer(1, 12))
@@ -156,7 +164,7 @@ def build_pdf_bytes(snapshot: dict) -> bytes:
                 ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                 ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),      # Заголовок
                 ("BACKGROUND", (0, 1), (-1, 1), colors.whitesmoke),     # Строка Выручки (светлая)
-                ("FONTNAME", (0, 1), (-1, 1), font_name),               # Выручка обычным шрифтом (или жирным если есть)
+                ("FONTNAME", (0, 1), (-1, 1), font_name),               # Выручка обычным шрифтом
                 ("BACKGROUND", (0, -1), (-1, -1), "#E6F4EA"),          # Строка прибыли (зеленоватая)
                 ("PADDING", (0, 0), (-1, -1), 5),
                 ("ALIGN", (1, 0), (-1, -1), "RIGHT"),                   # Выравнивание цифр вправо
